@@ -1,0 +1,51 @@
+name: Fork sync
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # daily 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report, change nothing"
+        type: boolean
+        default: false
+      gmscompat:
+        description: "Also merge lineage-24.0 into gmscompat branches"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure issue label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh label create sync-conflict -R "$GITHUB_REPOSITORY" --color B60205 --description "Fork sync needs manual action" 2>/dev/null || true
+
+      - name: Sync forks
+        env:
+          FORK_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          SYNC_GMSCOMPAT: ${{ inputs.gmscompat == false && 'false' || 'true' }}
+        run: python3 sync.py
+
+      # GitHub disables cron workflows after 60 days without repo activity.
+      - name: Keep schedule alive
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/sync.yml/enable" || true
